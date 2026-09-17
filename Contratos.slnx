@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Contratos.Application/Contratos.Application.csproj" />
+    <Project Path="src/Contratos.Domain/Contratos.Domain.csproj" />
+    <Project Path="src/Contratos.Infrastructure/Contratos.Infrastructure.csproj" />
+    <Project Path="src/Contratos.WebApi/Contratos.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Contratos.Application.Tests/Contratos.Application.Tests.csproj" />
+    <Project Path="tests/Contratos.Domain.Tests/Contratos.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
