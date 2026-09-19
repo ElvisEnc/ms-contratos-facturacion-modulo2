@@ -8,6 +8,12 @@ public sealed record Pago
     public Money Monto { get; }
     public string Referencia { get; }
 
+    private Pago()
+    {
+        Monto = null!;
+        Referencia = string.Empty;
+    } // EF Core: Monto es OwnsOne anidado, no puede pasar por constructor (Joseco.DDD.Core)
+
     private Pago(DateOnly fecha, Money monto, string referencia)
     {
         Fecha = fecha;

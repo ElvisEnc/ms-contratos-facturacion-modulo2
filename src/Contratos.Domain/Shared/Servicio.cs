@@ -8,6 +8,12 @@ public sealed record Servicio
     public string Nombre { get; }
     public Money Precio { get; }
 
+    private Servicio()
+    {
+        Nombre = string.Empty;
+        Precio = null!;
+    } // EF Core: Precio es OwnsOne anidado, no puede pasar por constructor (Joseco.DDD.Core)
+
     private Servicio(TipoServicio tipo, string nombre, Money precio)
     {
         Tipo = tipo;
