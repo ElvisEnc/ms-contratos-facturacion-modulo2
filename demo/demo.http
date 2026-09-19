@@ -1,0 +1,488 @@
+### ============================================================
+### ms-contratos-facturacion — demo/demo.http
+### Fase 6 (docs/GUIA.md, docs/DESIGN.md §12 y §17).
+###
+### Correr de arriba abajo, petición por petición, contra base de
+### datos limpia y `dotnet run --project src/Contratos.WebApi`
+### corriendo. El orden es parte de lo que se demuestra: no vale
+### en trozos ni fuera de orden.
+###
+### Tres pacientes:
+###   - pacienteId  -> flujo principal de contratación/pago/
+###                    cancelación (pasos 3-11) y, una vez sin
+###                    catering, control adicional (pasos 15-18, 20)
+###   - pacienteId2 -> duración de plan inválida (paso 12, C4) y
+###                    evaluación QUINCENAL sin catering (paso 14)
+###   - pacienteId3 -> único con catering VIGENTE de verdad, para
+###                    demostrar que RN-06 bloquea el cobro (paso 13)
+### ============================================================
+
+@baseUrl = http://localhost:5030
+@contentType = application/json
+
+### PASO 1a — Catálogo: EVALUACION (HU-20)
+// Precio 150,00 BOB: mismo valor que el ejemplo de control adicional
+// de DESIGN.md §12.2 (subtotal 150,00 / impuesto 19,50 / total 169,50).
+POST {{baseUrl}}/api/servicios
+Content-Type: {{contentType}}
+
+{
+  "tipo": "EVALUACION",
+  "nombre": "Evaluación nutricional",
+  "precio": 150.00,
+  "moneda": "BOB"
+}
+
+### PASO 1b — Catálogo: ASESORAMIENTO (HU-20)
+POST {{baseUrl}}/api/servicios
+Content-Type: {{contentType}}
+
+{
+  "tipo": "ASESORAMIENTO",
+  "nombre": "Asesoramiento nutricional",
+  "precio": 300.00,
+  "moneda": "BOB"
+}
+
+### PASO 1c — Catálogo: CATERING (HU-20)
+// Precio 4500,00 BOB: mismo valor que el ejemplo de contratación de
+// DESIGN.md §12.1 (subtotal 4500,00 + impuesto 585,00 = total 5085,00
+// al 13%, C11/RN-25).
+POST {{baseUrl}}/api/servicios
+Content-Type: {{contentType}}
+
+{
+  "tipo": "CATERING",
+  "nombre": "Catering nutricional diario",
+  "precio": 4500.00,
+  "moneda": "BOB"
+}
+
+### PASO 2 — C18: Money valida la moneda en el VO, no en el handler
+// Money.Crear rechaza cualquier moneda fuera de la lista cerrada
+// { BOB, USD } (SISTEMA.md §8, DESIGN.md §6 fila C18). "EUR" nunca
+// llega a persistirse: falla dentro de Domain.
+// Esperado: 400 · C18_MONEY_MONEDA_INVALIDA
+POST {{baseUrl}}/api/servicios
+Content-Type: {{contentType}}
+
+{
+  "tipo": "ASESORAMIENTO",
+  "nombre": "Asesoramiento internacional",
+  "precio": 100.00,
+  "moneda": "EUR"
+}
+
+### PASO 3 — C1: paciente que nadie registró todavía
+// No existe PacienteConocido para este pacienteId: BC1 no publicó
+// PacienteRegistrado (DESIGN.md §6 fila C1; RN-05).
+// Esperado: 400 · C1_PACIENTE_DESCONOCIDO
+@pacienteId = {{$guid}}
+
+POST {{baseUrl}}/api/contratos
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "tipoServicio": "CATERING"
+}
+
+### PASO 4a — PacienteRegistrado con contacto ANIDADO (primer envío)
+// Idempotente por pacienteId (upsert, DESIGN.md §9.4). El campo
+// "contacto" se deserializa y se descarta: Application solo guarda
+// nombre y nroIdentificacion.
+// Esperado: 200
+POST {{baseUrl}}/api/integracion/paciente-registrado
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "nombre": "Ana Pérez",
+  "nroIdentificacion": "7654321 LP",
+  "contacto": {
+    "telefono": "+591 70011223",
+    "email": "ana.perez@correo.com",
+    "direccion": "Av. Banzer #345"
+  }
+}
+
+### PASO 4b — Mismo evento, mismo pacienteId (segundo envío: idempotencia)
+// Reprocesar no duplica la réplica: sobrescribe los mismos valores
+// (last-write-wins sobre la clave primaria pacienteId).
+// Esperado: 200
+POST {{baseUrl}}/api/integracion/paciente-registrado
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "nombre": "Ana Pérez",
+  "nroIdentificacion": "7654321 LP",
+  "contacto": {
+    "telefono": "+591 70011223",
+    "email": "ana.perez@correo.com",
+    "direccion": "Av. Banzer #345"
+  }
+}
+
+### PASO 5 — C2: paciente conocido pero SIN plan alimenticio activo
+// TienePlanActivo sigue en falso hasta que llegue PlanAlimenticioAsignado
+// (DESIGN.md §6 fila C2; RN-03, RN-01b).
+// Esperado: 400 · C2_SIN_PLAN_ACTIVO
+POST {{baseUrl}}/api/contratos
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "tipoServicio": "CATERING"
+}
+
+### PASO 6 — PlanAlimenticioAsignado, duracionDias 15, detalle
+### completo de tres niveles (dia -> tiempos -> recetas), fechas
+### absolutas (SISTEMA.md §9.6)
+// fechaInicio 2026-09-07 + 15 días => vigencia 2026-09-07..2026-09-21
+// (mismo ejemplo textual de DESIGN.md §9.6). Application guarda
+// fechaInicio y duracionDias en la réplica (C4/RN-01b) y descarta el
+// "detalle" completo tras deserializarlo.
+// Esperado: 200
+@planId = {{$guid}}
+
+POST {{baseUrl}}/api/integracion/plan-asignado
+Content-Type: {{contentType}}
+
+{
+  "planId": "{{planId}}",
+  "pacienteId": "{{pacienteId}}",
+  "fechaInicio": "2026-09-07",
+  "duracionDias": 15,
+  "detalle": [
+    {
+      "dia": "2026-09-07",
+      "tiempos": [
+        {
+          "tipo": "DESAYUNO",
+          "orden": 1,
+          "recetas": [
+            { "recetaId": "{{$guid}}", "nombreReceta": "Batido de avena y fruta", "cantidad": 1, "unidad": "porción" }
+          ]
+        },
+        {
+          "tipo": "ALMUERZO",
+          "orden": 2,
+          "recetas": [
+            { "recetaId": "{{$guid}}", "nombreReceta": "Pollo a la plancha con quinua", "cantidad": 1, "unidad": "porción" },
+            { "recetaId": "{{$guid}}", "nombreReceta": "Ensalada mixta", "cantidad": 1, "unidad": "porción" }
+          ]
+        },
+        {
+          "tipo": "CENA",
+          "orden": 3,
+          "recetas": [
+            { "recetaId": "{{$guid}}", "nombreReceta": "Crema de zapallo", "cantidad": 1, "unidad": "porción" }
+          ]
+        }
+      ]
+    },
+    {
+      "dia": "2026-09-08",
+      "tiempos": [
+        {
+          "tipo": "DESAYUNO",
+          "orden": 1,
+          "recetas": [
+            { "recetaId": "{{$guid}}", "nombreReceta": "Yogur con granola", "cantidad": 1, "unidad": "porción" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+### PASO 7a — HU-19: contratar CATERING SIN ENVIAR FECHAS
+// ContratarServicioCommand no tiene campos de fecha propios para
+// catering: la vigencia se deriva del plan activo (C4/RN-01b). El
+// precio se copia y se congela del catálogo (C15/RN-26) y la factura
+// se emite en el mismo commit que el contrato (C5/RN-05).
+// Esperado: 200 · { contratoId, facturaId }
+# @name contratarCatering
+POST {{baseUrl}}/api/contratos
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "tipoServicio": "CATERING"
+}
+
+### PASO 7b — Comprobar vigencia derivada (C17) y total con 13% (C11)
+// FechaFin = FechaInicio + DuracionDias - 1 = 2026-09-07 + 14 =
+// 2026-09-21 (NUNCA +15, si aparece +15 falta el "-1" de C17).
+// factura.total debe ser 5085.00 BOB (subtotal 4500.00 + impuesto
+// 585.00 al 13%, C11/RN-25). Revisa también en el log de la consola
+// los eventos de integración ServicioContratado y FacturaEmitida
+// (FacturaEmitida.monto = 5085.00, FacturaEmitida.moneda = "BOB").
+@contratoId = {{contratarCatering.response.body.$.contratoId}}
+@facturaId = {{contratarCatering.response.body.$.facturaId}}
+
+GET {{baseUrl}}/api/contratos/{{contratoId}}
+
+### PASO 8 — C3: segundo catering para el mismo paciente
+// Máximo un contrato CATERING ACTIVO por paciente, con solape de
+// vigencia (DESIGN.md §6 fila C3; RN-19). Respaldado además por un
+// índice único filtrado en base de datos.
+// Esperado: 409 · C3_CATERING_YA_ACTIVO
+POST {{baseUrl}}/api/contratos
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "tipoServicio": "CATERING"
+}
+
+### PASO 9 — C13: el pago debe cubrir EXACTAMENTE el total, sin parciales
+// RegistrarPagoCommandHandler compara Money completo (monto + moneda)
+// contra factura.Total ANTES de registrar nada (DESIGN.md §6 fila C13;
+// RN-18). 5000.00 != 5085.00.
+// Esperado: 400 · C13_PAGO_NO_COINCIDE_CON_TOTAL
+POST {{baseUrl}}/api/contratos/{{contratoId}}/pago
+Content-Type: {{contentType}}
+
+{
+  "monto": 5000.00,
+  "moneda": "BOB",
+  "referencia": "REC-0001-INTENTO"
+}
+
+### PASO 10a — El mismo pago con el total exacto y su misma moneda
+// Esperado: 200
+POST {{baseUrl}}/api/contratos/{{contratoId}}/pago
+Content-Type: {{contentType}}
+
+{
+  "monto": 5085.00,
+  "moneda": "BOB",
+  "referencia": "REC-0001"
+}
+
+### PASO 10b — Repetir el mismo pago: un contrato registra a lo sumo un Pago
+// Contrato.RegistrarPago rechaza un segundo pago aunque el monto y la
+// moneda coincidan (DESIGN.md §6 fila C13; RN-18).
+// Esperado: 409 · C13_PAGO_YA_REGISTRADO
+POST {{baseUrl}}/api/contratos/{{contratoId}}/pago
+Content-Type: {{contentType}}
+
+{
+  "monto": 5085.00,
+  "moneda": "BOB",
+  "referencia": "REC-0001"
+}
+
+### PASO 11a — Cancelar un contrato ya pagado
+// Esperado: 200
+POST {{baseUrl}}/api/contratos/{{contratoId}}/cancelar
+
+### PASO 11b — Verificar: contrato CANCELADO, factura sigue PAGADA (C8)
+// Cancelar anula la factura SOLO si está EMITIDA; una factura PAGADA
+// permanece PAGADA porque revertir un cobro exige nota de crédito
+// (DESIGN.md §6 fila C8 y §12.3 Caso B; RN-18). Este es el escenario
+// que docs/INCOHERENCIAS.md INC-5 aclara: es C8, no C6 — C6 vive en
+// Factura.MarcarPagada/Anular y aquí nunca se invoca porque la rama
+// condicional ya lo evita.
+GET {{baseUrl}}/api/contratos/{{contratoId}}
+
+### PASO 12a — Segundo paciente: plan con duracionDias 22 (inválido)
+// Esperado: 200 (plan-asignado no valida el rango; eso lo hace C4 al
+// contratar)
+@pacienteId2 = {{$guid}}
+@planId2 = {{$guid}}
+
+POST {{baseUrl}}/api/integracion/plan-asignado
+Content-Type: {{contentType}}
+
+{
+  "planId": "{{planId2}}",
+  "pacienteId": "{{pacienteId2}}",
+  "fechaInicio": "2026-09-08",
+  "duracionDias": 22,
+  "detalle": [
+    {
+      "dia": "2026-09-08",
+      "tiempos": [
+        {
+          "tipo": "DESAYUNO",
+          "orden": 1,
+          "recetas": [
+            { "recetaId": "{{$guid}}", "nombreReceta": "Jugo de frutas y tostadas", "cantidad": 1, "unidad": "porción" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+### PASO 12b — Contratar CATERING con duracionDias 22 replicado
+// DuracionDias debe ser 15 o 30 (DESIGN.md §6 fila C4; RN-01).
+// Esperado: 400 · C4_DURACION_INVALIDA
+POST {{baseUrl}}/api/contratos
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId2}}",
+  "tipoServicio": "CATERING"
+}
+
+### PASO 13a (setup) — Tercer paciente CON catering vigente de verdad
+// Necesario para el paso 13: pacienteId ya está CANCELADO (paso 11) y
+// pacienteId2 nunca llegó a contratar (falló en C4). Vigencia
+// 2026-09-10..2026-09-24.
+@pacienteId3 = {{$guid}}
+@planId3 = {{$guid}}
+
+POST {{baseUrl}}/api/integracion/paciente-registrado
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId3}}",
+  "nombre": "Carla Mamani",
+  "nroIdentificacion": "9988776 SC",
+  "contacto": {
+    "telefono": "+591 77012345",
+    "email": "carla.mamani@correo.com",
+    "direccion": "Calle Bolívar #12"
+  }
+}
+
+### PASO 13b (setup) — Plan alimenticio del tercer paciente, duracionDias 15
+POST {{baseUrl}}/api/integracion/plan-asignado
+Content-Type: {{contentType}}
+
+{
+  "planId": "{{planId3}}",
+  "pacienteId": "{{pacienteId3}}",
+  "fechaInicio": "2026-09-10",
+  "duracionDias": 15,
+  "detalle": [
+    {
+      "dia": "2026-09-10",
+      "tiempos": [
+        {
+          "tipo": "ALMUERZO",
+          "orden": 1,
+          "recetas": [
+            { "recetaId": "{{$guid}}", "nombreReceta": "Sopa de maní", "cantidad": 1, "unidad": "porción" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+### PASO 13c (setup) — Contratar CATERING para el tercer paciente
+// Esperado: 200
+POST {{baseUrl}}/api/contratos
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId3}}",
+  "tipoServicio": "CATERING"
+}
+
+### PASO 13d — EvaluacionRegistrada tipo CONTROL, paciente CON catering vigente
+// C7 primera condición: tipo es CONTROL, podría haber cobro. C7
+// segunda condición — RN-06, lectura binaria: con catering vigente en
+// la fecha de la evaluación (2026-09-15, dentro de 2026-09-10..
+// 2026-09-24) NUNCA se cobra un control. No cobrar es 200 sin efecto,
+// no un error (DESIGN.md §6 fila C7).
+// Esperado: 200 y NO se crea ningún control
+POST {{baseUrl}}/api/integracion/evaluacion-registrada
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId3}}",
+  "evaluacionId": "{{$guid}}",
+  "fecha": "2026-09-15",
+  "tipo": "CONTROL"
+}
+
+### PASO 13e — Verificar: no se creó ningún control para el tercer paciente
+GET {{baseUrl}}/api/pacientes/{{pacienteId3}}/controles
+
+### PASO 14 — EvaluacionRegistrada tipo QUINCENAL, paciente SIN catering
+// C7 primera condición basta para bloquear: una QUINCENAL no es
+// CONTROL, así que nunca genera cobro, tenga o no catering vigente
+// (DESIGN.md §6.2 — "una QUINCENAL no genera cobro jamás").
+// Esperado: 200 y tampoco se crea nada
+POST {{baseUrl}}/api/integracion/evaluacion-registrada
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId2}}",
+  "evaluacionId": "{{$guid}}",
+  "fecha": "2026-09-12",
+  "tipo": "QUINCENAL"
+}
+
+### PASO 15 — EvaluacionRegistrada tipo CONTROL, primer paciente ya SIN catering
+// pacienteId quedó CANCELADO en el paso 11: TieneCateringVigenteEnAsync
+// es falso, así que C7 sí genera el cobro. Se usa el precio vigente
+// del catálogo para EVALUACION (150.00 BOB): subtotal 150.00 +
+// impuesto 19.50 = total 169.50, con Origen CONTROL_ADICIONAL
+// (DESIGN.md §12.2; RN-06).
+// Esperado: 200, se crea el control con su factura
+@evaluacionId = {{$guid}}
+
+POST {{baseUrl}}/api/integracion/evaluacion-registrada
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "evaluacionId": "{{evaluacionId}}",
+  "fecha": "2026-09-25",
+  "tipo": "CONTROL"
+}
+
+### PASO 16a — Reprocesar el MISMO evaluacionId (C10)
+// ExistePorEvaluacionAsync se comprueba como PRIMERA instrucción del
+// handler, antes de mirar vigencia o catálogo (DESIGN.md §6 fila C10;
+// §12.2 nota "Reproceso del mismo evento").
+// Esperado: 200, sin efecto
+POST {{baseUrl}}/api/integracion/evaluacion-registrada
+Content-Type: {{contentType}}
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "evaluacionId": "{{evaluacionId}}",
+  "fecha": "2026-09-25",
+  "tipo": "CONTROL"
+}
+
+### PASO 16b — Verificar: sigue habiendo UN solo control (C10)
+# @name verificarControles
+GET {{baseUrl}}/api/pacientes/{{pacienteId}}/controles
+
+### PASO 17a — Pagar el control adicional
+// El importe ya está calculado en la factura del control: el endpoint
+// no recibe body.
+// Esperado: 200
+@controlId = {{verificarControles.response.body.$[0].controlId}}
+
+POST {{baseUrl}}/api/controles/{{controlId}}/pago
+
+### PASO 17b — Repetir el pago del mismo control
+// ControlAdicional.MarcarPagado rechaza un segundo pago (DESIGN.md §6
+// fila C21; RN-18).
+// Esperado: 409 · C21_CONTROL_YA_PAGADO
+POST {{baseUrl}}/api/controles/{{controlId}}/pago
+
+### PASO 18 — Facturas del primer paciente: contratación y control JUNTAS
+// pacienteId tiene ambos orígenes: CONTRATACION (catering, PAGADA en
+// el paso 10) y CONTROL_ADICIONAL (PAGADA en el paso 17), distinguibles
+// por el campo "origen" (HU-21).
+GET {{baseUrl}}/api/pacientes/{{pacienteId}}/facturas
+
+### PASO 19 — Contratos filtrados por estado ACTIVO (HU-23)
+// Filtra por EstadoDerivado(hoy), nunca por la columna Estado
+// almacenada: incluye el catering vigente de pacienteId3 y excluye el
+// de pacienteId (CANCELADO en el paso 11).
+GET {{baseUrl}}/api/contratos?desde=2026-09-01&hasta=2026-10-31&estado=ACTIVO
+
+### PASO 20 — Controles del primer paciente: uno solo, pagado (HU-22)
+GET {{baseUrl}}/api/pacientes/{{pacienteId}}/controles
