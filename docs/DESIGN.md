@@ -1797,7 +1797,7 @@ Orden interno, porque cada paso depende del anterior:
 
 ### Fase 6 — Demo y README
 
-1. `demo/demo.http` con el flujo completo **y los casos negativos**: C1 (paciente desconocido), C2 (catering sin plan), C3 (segundo catering), C4 (duración fuera de 15/30), C6 (anular una factura pagada), C10 (reprocesar la misma evaluación) y moneda inválida (C18).
+1. `demo/demo.http` con el flujo completo **y los casos negativos**: C1 (paciente desconocido), C2 (catering sin plan), C3 (segundo catering), C4 (duración fuera de 15/30), C8 (cancelar un contrato con factura ya pagada), C10 (reprocesar la misma evaluación) y moneda inválida (C18).
 2. `README.md` con descripción, funcionalidades, el **diagrama de clases de §5.1** y la puesta en marcha.
 
 **Condición de cierre:** el flujo de `demo/demo.http` corre de punta a punta contra PostgreSQL real, incluidos los negativos con su código de error y su HTTP esperados.

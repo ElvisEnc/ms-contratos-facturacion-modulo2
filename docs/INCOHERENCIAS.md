@@ -79,6 +79,25 @@ Las incoherencias del proyecto se cerraron antes de empezar: están en
 
 ---
 
+### INC-5 · `DESIGN.md` §17 etiqueta como C6 el mismo escenario que §6/§12.3 documentan como C8
+
+- **Detectada en:** fase 6, preparando los comentarios de `demo/demo.http` según §12 y §17.
+- **Fuente A dice:** `docs/DESIGN.md` §17, Fase 6, ítem 1: «`demo/demo.http` con el flujo completo y los casos negativos: C1 (paciente desconocido), C2 (catering sin plan), C3 (segundo catering), C4 (duración fuera de 15/30), **C6 (anular una factura pagada)**, C10 (reprocesar la misma evaluación) y moneda inválida (C18).»
+- **Fuente B dice:** `docs/DESIGN.md` §6, fila C8: «Cancelar un contrato anula su factura **solo si está `EMITIDA`**. Una factura `PAGADA` permanece `PAGADA`.» — Handler `CancelarContratoCommandHandler`, sin error asociado («rama condicional, no error»). Y §12.3, Caso B: «`H-&gt;&gt;H: Factura.Estado es PAGADA, no es EMITIDA` — Nota: **C8** — no se llama a Anular, revertir un cobro exige nota de crédito» → `200 OK`, contrato `CANCELADO`, factura sigue `PAGADA`. Confirmado en código: `Contrato.RegistrarPago` (`src/Contratos.Domain/Contratos/Contrato.cs`) corta con C14 si el contrato no está `ACTIVO`, y `CancelarContratoCommandHandler` solo invoca `Factura.Anular()` cuando la factura está `EMITIDA`; `C6_ESTADO_FACTURA_INVALIDO` (`src/Contratos.Domain/Facturas/Factura.cs`, `MarcarPagada`/`Anular`) no es alcanzable desde ningún endpoint HTTP existente.
+- **Por qué no puedo continuar (parcial):** no bloqueó el trabajo de esta fase — el flujo de 20 pasos que se me pidió ya sigue la interpretación C8 (paso 11: cancelar un contrato ya pagado → 200, factura sigue `PAGADA`), consistente con §6/§12.3. Se registra porque §17 del mismo documento nombra ese escenario con el código equivocado, y el protocolo exige registrar toda contradicción detectada aunque no bloquee.
+- **Opciones:** A) Corregir la etiqueta de §17 de "C6" a "C8 (cancelar un contrato con factura ya pagada)", sin tocar comportamiento ni código — es una corrección de redacción. B) Dejar §17 como está, confiando en que §6/§12.3 prevalecen por ser más específicas. C) Implementar un escenario real que dispare C6 (por ejemplo, exponer una operación que invoque `Factura.Anular()`/`MarcarPagada()` sobre una factura no `EMITIDA`), y usarlo en el `demo.http` en vez de citar C8 en el paso 11.
+- **Mi recomendación y por qué:** A. Es del mismo tipo que INC-2 e INC-4, ya resueltas con la opción A: una celda o etiqueta mal cruzada entre dos invariantes reales y ya documentadas, sin que el código ni el comportamiento deban cambiar. C6 sigue siendo una invariante de dominio legítima (defensa en profundidad en `Factura`), solo que no es la que se ejercita al cancelar un contrato ya pagado.
+- **Impacto si se elige mal:** si se elige C, se inventa un caso de uso o un endpoint que el enunciado no pide solo para poder disparar C6 por HTTP, añadiendo superficie de API no solicitada. Si se deja sin corregir (ninguna de las tres), quien lea solo §17 en la próxima fase o en la defensa puede buscar —o peor, esperar del alumno— un 409 `C6_ESTADO_FACTURA_INVALIDO` donde el sistema, correctamente, responde 200.
+- **Resolución:** Opción A. `docs/DESIGN.md` §17, Fase 6, ítem 1, se corrigió
+  de «C6 (anular una factura pagada)» a «C8 (cancelar un contrato con
+  factura ya pagada)». No se tocó comportamiento ni código: `C6_ESTADO_FACTURA_INVALIDO`
+  sigue viva en `Factura.MarcarPagada`/`Anular` como invariante de dominio,
+  simplemente no es la que corresponde citar en este escenario. `demo/demo.http`
+  paso 11 ya citaba el código correcto (C8).
+- **Estado:** RESUELTA — opción A
+
+---
+
 <!-- Formato de cada entrada:
 
 ### INC-1 · <título en una línea>
