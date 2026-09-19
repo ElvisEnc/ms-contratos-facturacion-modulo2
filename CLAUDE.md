@@ -93,7 +93,8 @@ tipo del paquete. En particular:
   `Guid.NewGuid()` dentro del factory (INC-S2).
 - `IRepository<T>` solo tiene `GetByIdAsync` y `AddAsync`. Lo demás va en
   `IContratoRepository`, `IFacturaRepository`, `IControlAdicionalRepository` e
-  `IServicioCatalogoRepository`, declaradas en Domain (§14.5).
+  `IServicioCatalogoRepository`, declaradas en **Application** (§14.5, fase 3
+  de `docs/GUIA.md` — INC-1, resuelta con la opción B).
 - `builder.Ignore(x => x.DomainEvents)` en la configuración de cada agregado.
 - Los agregados lanzan, no devuelven `Result`. No mezcles los dos estilos.
 
