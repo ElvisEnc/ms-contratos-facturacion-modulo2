@@ -865,6 +865,8 @@ Lo que emite el agregado no es el objeto que cruza la frontera. El dominio no ti
 
 **Hoy nadie lo consume.** Es el evento que habilitaría la notificación al paciente (HU-12 y HU-43 son de otros contextos, pero la notificación de facturación es del mismo tipo) y la facturación electrónica. Se publica igualmente con su contrato definitivo, como exige §6.10 del maestro: el consumidor externo puede aparecer sin que BC3 cambie una línea.
 
+**`moneda` es `string`, no el enum `Moneda` de §5.5, a propósito (INC-3).** `SISTEMA.md` §8 cataloga `Moneda` como enumeración cerrada `{BOB, USD}`, pero la tabla literal de `SISTEMA.md` §9.3 tipa el campo `moneda` de este evento como `string`. Esta tabla sigue la fuente más específica —la que de hecho define el JSON que viaja por el bus— y no el catálogo general de §8. No se cambia a enum sin que el maestro lo pida primero.
+
 ### 9.2 Eventos consumidos
 
 #### `PacienteRegistrado` — BC1 → BC3 (§9.1 del maestro)
@@ -937,7 +939,7 @@ Ejemplo con los valores del caso típico: plan de **15 días** que empieza el **
 | `pacienteId` | guid | Localiza los contratos del paciente para preguntar por la vigencia del catering |
 | `evaluacionId` | guid | **Clave de idempotencia (C10)** y campo persistido en `ControlAdicional` |
 | `fecha` | date | Fecha contra la que se evalúa la vigencia del catering, y fecha del control |
-| `tipo` | `TipoEvaluacion` | Primera condición de C7: solo `CONTROL` puede generar cobro |
+| `tipo` | `string` | Primera condición de C7: solo `CONTROL` puede generar cobro. Llega como `string`, no como el enum `TipoEvaluacion` de BC1 — la excepción está razonada en §5.5/§5.6 (INC-4) |
 
 **Qué hace el handler, paso a paso:**
 
@@ -1568,7 +1570,7 @@ No es un agregado: no tiene `IRepository<T>`, no emite eventos y se persiste con
 
 ### 14.5 Repositorios
 
-`IRepository<T>` del núcleo solo define `GetByIdAsync` y `AddAsync`. Toda invariante que cruce agregados exige un método declarado explícitamente en la interfaz específica del microservicio (§12.7 del maestro):
+`IRepository<T>` del núcleo solo define `GetByIdAsync` y `AddAsync`. Toda invariante que cruce agregados exige un método declarado explícitamente en la interfaz específica del microservicio (§12.7 del maestro). **Estas cuatro interfaces se declaran en `Contratos.Application`**, no en `Contratos.Domain`: son el puerto que la fase 3 necesita para las invariantes de orquestación de §6.1, y es Application quien las consume desde los handlers; Infrastructure las implementa sin invertir la flecha de dependencias. Es la resolución de INC-1 (opción B, `docs/INCOHERENCIAS.md`), y coincide con §17 fase 3 paso 2 y con `docs/GUIA.md`:
 
 | Método | Interfaz | Para qué |
 |---|---|---|
@@ -1656,7 +1658,7 @@ Los casos de §13.2 del maestro que aplican aquí: validaciones que cruzan agreg
 
 | Caso de §13.2 del maestro | Clase de test | Tests |
 |---|---|---|
-| **Validaciones que cruzan agregados o repositorio** | `ContratarServicioCommandHandlerTests` | `Handle_PacienteDesconocido_FallaConC1` · `Handle_CateringSinPlanActivo_FallaConC2` · `Handle_SegundoCateringActivo_FallaConC3` · `Handle_SegundaEvaluacionActivaElMismoDia_FallaConC3` · `Handle_CateringConDuracionDePlanFueraDe15O30_FallaConC4` · `Handle_ServicioInactivo_FallaConC9` · `Handle_ServicioAusenteDelCatalogo_FallaConCatalogoMalConfiguradoYEsFailure` |
+| **Validaciones que cruzan agregados o repositorio** | `ContratarServicioCommandHandlerTests` | `Handle_PacienteDesconocido_FallaConC1` · `Handle_CateringSinPlanActivo_FallaConC2` · `Handle_SegundoCateringActivo_FallaConC3` · `Handle_SegundoCateringConVigenciaQueSolapaEnFechaDistinta_FallaConC3` · `Handle_CateringConDuracionDePlanFueraDe15O30_FallaConC4` · `Handle_ServicioInactivo_FallaConC9` · `Handle_ServicioAusenteDelCatalogo_FallaConCatalogoMalConfiguradoYEsFailure` |
 | **«Máximo 1 activo por paciente» y cierre perezoso** | `ContratarServicioCommandHandlerTests` | `Handle_CateringAnteriorVencido_LoCompletaAntesDeContratarElNuevo` (C12 + C3) |
 | **RN-01b y RN-26 en el handler** | `ContratarServicioCommandHandlerTests` | `Handle_Catering_CopiaLaVigenciaDelPlanYNoDelCommand` · `Handle_Catering_IgnoraLaFechaInicioEnviadaPorElCliente` · `Handle_UnCambioDePrecioPosterior_NoAlteraElContratoYaEmitido` |
 | **C5 y RN-25 en el handler** | `ContratarServicioCommandHandlerTests` | `Handle_HappyPath_EmiteFacturaYContratoEnElMismoCommit` · `Handle_ElTotalUsaElPorcentajeConfiguradoEnFacturacionOptions_NoUnTrecePorCientoFijo` |
